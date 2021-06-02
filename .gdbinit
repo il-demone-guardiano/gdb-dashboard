@@ -405,6 +405,7 @@ class Dashboard(gdb.Command):
         Dashboard.StyleCommand(self, 'dashboard', R, R.attributes())
         # main terminal
         self.output = None
+        self.suppress = False
         # used to inhibit redisplays during init parsing
         self.inhibited = None
         # enabled by default
@@ -416,16 +417,20 @@ class Dashboard(gdb.Command):
         # dashboard is printed to a separate file (dashboard -output ...)
         # or there are no modules to display in the main terminal
         enabled_modules = list(filter(lambda m: not m.output and m.enabled, self.modules))
-        if self.is_running() and not self.output and len(enabled_modules) > 0:
+        if self.is_running() and not self.suppress and not self.output and len(enabled_modules) > 0:
             width, _ = Dashboard.get_term_size()
             gdb.write(Dashboard.clear_screen())
             gdb.write(divider(width, 'Output/messages', True))
             gdb.write('\n')
             gdb.flush()
+        self.suppress = False
 
-    def on_stop(self, _):
+    def on_stop(self, event):
         if self.is_running():
-            self.render(clear_screen=False)
+            if not isinstance(event, gdb.BreakpointEvent) or event.breakpoint.commands is None:
+                self.render(clear_screen=False)
+            else:
+                self.suppress = True
 
     def on_exit(self, _):
         if not self.is_running():
