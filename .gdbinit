@@ -358,6 +358,9 @@ def fetch_breakpoints(watchpoints=False, pending=False):
     breakpoints = []
     # XXX in older versions gdb.breakpoints() returns None
     for gdb_breakpoint in gdb.breakpoints() or []:
+        # skip internal breakpoints
+        if gdb_breakpoint.number < 0:
+            continue
         addresses, is_pending = parsed_breakpoints[gdb_breakpoint.number]
         is_pending = getattr(gdb_breakpoint, 'pending', is_pending)
         if not pending and is_pending:
@@ -576,6 +579,8 @@ class Dashboard(gdb.Command):
 
     @staticmethod
     def start():
+        # save the instance for customization convenience
+        global dashboard
         # initialize the dashboard
         dashboard = Dashboard()
         Dashboard.set_custom_prompt(dashboard)
@@ -1228,7 +1233,7 @@ class Source(Dashboard.Module):
             if int(number) == current_line:
                 # the current line has a different style without ANSI
                 if R.ansi:
-                    if self.highlighted:
+                    if self.highlighted and not self.highlight_line:
                         line_format = '{}' + ansi(number_format, R.style_selected_1) + '  {}'
                     else:
                         line_format = '{}' + ansi(number_format + '  {}', R.style_selected_1)
@@ -1284,6 +1289,12 @@ A value of 0 uses the whole height.''',
                 'name': 'tab_size',
                 'type': int,
                 'check': check_gt_zero
+            },
+            'highlight-line': {
+                'doc': 'Decide whether the whole current line should be highlighted.',
+                'default': False,
+                'name': 'highlight_line',
+                'type': bool
             }
         }
 
@@ -1409,7 +1420,7 @@ The instructions constituting the current statement are marked, if available.'''
                 indicator = ansi(indicator, R.style_selected_1)
                 opcodes = ansi(opcodes, R.style_selected_1)
                 func_info = ansi(func_info, R.style_selected_1)
-                if not highlighter.active:
+                if not highlighter.active or self.highlight_line:
                     text = ansi(text, R.style_selected_1)
             elif line_info and line_info.pc <= addr < line_info.last:
                 if not R.ansi:
@@ -1418,7 +1429,7 @@ The instructions constituting the current statement are marked, if available.'''
                 indicator = ansi(indicator, R.style_selected_2)
                 opcodes = ansi(opcodes, R.style_selected_2)
                 func_info = ansi(func_info, R.style_selected_2)
-                if not highlighter.active:
+                if not highlighter.active or self.highlight_line:
                     text = ansi(text, R.style_selected_2)
             else:
                 addr_str = ansi(addr_str, R.style_low)
@@ -1471,6 +1482,12 @@ A value of 0 uses the whole height.''',
                 'doc': 'Function information visibility flag.',
                 'default': True,
                 'name': 'show_function',
+                'type': bool
+            },
+            'highlight-line': {
+                'doc': 'Decide whether the whole current line should be highlighted.',
+                'default': False,
+                'name': 'highlight_line',
                 'type': bool
             }
         }
@@ -1945,11 +1962,14 @@ class Registers(Dashboard.Module):
         # fetch registers status
         registers = []
         for name in register_list:
-            # Exclude registers with a dot '.' or parse_and_eval() will fail
+            # exclude registers with a dot '.' or parse_and_eval() will fail
             if '.' in name:
                 continue
             value = gdb.parse_and_eval('${}'.format(name))
             string_value = Registers.format_value(value)
+            # exclude unavailable registers (see #255)
+            if string_value == '<unavailable>':
+                continue
             changed = self.table and (self.table.get(name, '') != string_value)
             self.table[name] = string_value
             registers.append((name, string_value, changed))
